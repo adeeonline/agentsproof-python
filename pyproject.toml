@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentsproof"
+version = "0.1.0"
+description = "Observability and proof reporting for AI agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["ai", "agents", "observability", "llm", "tracing"]
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[project.urls]
+Homepage = "https://agentsproof.dev"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentsproof"]
