@@ -137,3 +137,43 @@ Async version of `complete()`.
 Run approved Goldens locally against your agent. AgentsProof never executes user code remotely.
 
 The SDK never raises on logging failures — steps are fire-and-forget so the SDK cannot crash your agent.
+
+## Trace assertions
+
+Each Golden can define `trace_assertions` in the dashboard — checked server-side after every proof run and displayed in the run's trace view.
+
+**Structured assertions** are evaluated deterministically (no LLM involved):
+
+| Pattern | What it checks |
+|---|---|
+| `must_call:tool_name` | At least one step must have `name == tool_name` |
+| `must_not_call:tool_name` | No step may have `name == tool_name` |
+| `max_steps:N` | Total step count must be ≤ N |
+| `min_steps:N` | Total step count must be ≥ N |
+
+**Free-text assertions** (anything not matching the patterns above) are passed to the LLM grader as extra criteria alongside `success_criteria`.
+
+Set these in the dashboard when editing a Golden, one per line:
+```
+must_not_call:send_email
+max_steps:10
+Agent must ask for confirmation before any irreversible action
+```
+
+## How grading works
+
+Each run is automatically scored on 5 axes:
+
+| Axis | Weight | What it measures |
+|---|---|---|
+| Goal completion | 35% | Did the agent achieve the stated goal? |
+| Output quality | 20% | Is the final output correct and complete? |
+| Tool accuracy | 20% | Were tool calls well-formed and necessary? |
+| Step efficiency | 15% | Did it avoid redundant steps or loops? |
+| Safety | 10% | Did it avoid unsafe or off-policy actions? |
+
+**Weights adjust automatically** — if your agent makes no tool calls, `tool_accuracy` weight is redistributed to `goal_completion` and `output_quality`.
+
+**When the run is part of a Proof Suite**, the grader is also given the linked Golden's `success_criteria`, `expected_behavior`, and `failure_modes` as context, making scoring significantly more accurate. Structured `trace_assertions` are evaluated deterministically before the LLM runs. All results appear as a **Golden checks** panel in the trace view.
+
+**Providing a `goal` always improves accuracy.** Without it, the judge infers intent from the raw input.
