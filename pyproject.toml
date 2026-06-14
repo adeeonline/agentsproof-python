@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentsproof"
-version = "1.0.3"
+version = "1.0.4"
 description = "Observability and proof reporting for AI agents"
 readme = "README.md"
 requires-python = ">=3.9"

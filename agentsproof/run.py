@@ -5,13 +5,45 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import httpx
 
 from .types import StepPayload, StepType
 
 T = TypeVar("T")
+
+
+def _get(obj: Any, key: str) -> Any:
+    """Get a field from either a dict or an object attribute."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _sniff_usage(output: Any) -> Dict[str, Any]:
+    """Best-effort extraction of token count from well-known LLM response shapes."""
+    try:
+        usage = _get(output, "usage") if output is not None else None
+        if usage is None:
+            return {}
+        # Anthropic: input_tokens + output_tokens
+        input_tokens = _get(usage, "input_tokens")
+        output_tokens = _get(usage, "output_tokens")
+        if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+            return {"token_count": input_tokens + output_tokens}
+        # OpenAI-compatible: total_tokens
+        total_tokens = _get(usage, "total_tokens")
+        if isinstance(total_tokens, int):
+            return {"token_count": total_tokens}
+        # OpenAI-compatible: prompt_tokens + completion_tokens
+        prompt_tokens = _get(usage, "prompt_tokens")
+        completion_tokens = _get(usage, "completion_tokens")
+        if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+            return {"token_count": prompt_tokens + completion_tokens}
+    except Exception:
+        pass
+    return {}
 
 
 class AgentRun:
@@ -93,8 +125,21 @@ class AgentRun:
 
         threading.Thread(target=_send, daemon=True).start()
 
-    def trace(self, type: StepType, name: str, fn: Callable[[], T], input: Any = None) -> T:
-        """Wrap a sync callable and auto-log it as a step with latency captured."""
+    def trace(
+        self,
+        type: StepType,
+        name: str,
+        fn: Callable[[], T],
+        input: Any = None,
+        extract: Optional[Callable[[Any], Dict[str, Any]]] = None,
+    ) -> T:
+        """Wrap a sync callable and auto-log it as a step with latency captured.
+
+        ``extract`` receives the return value of ``fn`` and should return a dict
+        with optional keys ``token_count`` (int) and ``cost_usd`` (float). When
+        omitted, the SDK attempts to detect usage from Anthropic / OpenAI-compatible
+        response shapes automatically. Falls back to null if neither works.
+        """
         t0 = time.monotonic()
         try:
             result = fn()
@@ -107,17 +152,36 @@ class AgentRun:
                 "latency_ms": (time.monotonic() - t0) * 1000,
             })
             raise
+        usage: Dict[str, Any] = {}
+        if extract is not None:
+            try:
+                usage = extract(result) or {}
+            except Exception:
+                pass
+        else:
+            usage = _sniff_usage(result)
         self.log_step({
             "type": type,
             "name": name,
             "input": input,
             "output": result,
             "latency_ms": (time.monotonic() - t0) * 1000,
+            **usage,
         })
         return result
 
-    async def atrace(self, type: StepType, name: str, fn: Callable[[], Any], input: Any = None) -> Any:
-        """Wrap a sync or async callable and auto-log it as a step. Use in async contexts."""
+    async def atrace(
+        self,
+        type: StepType,
+        name: str,
+        fn: Callable[[], Any],
+        input: Any = None,
+        extract: Optional[Callable[[Any], Dict[str, Any]]] = None,
+    ) -> Any:
+        """Wrap a sync or async callable and auto-log it as a step. Use in async contexts.
+
+        See ``trace()`` for docs on the ``extract`` parameter.
+        """
         t0 = time.monotonic()
         try:
             result = await fn() if inspect.iscoroutinefunction(fn) else fn()
@@ -130,12 +194,21 @@ class AgentRun:
                 "latency_ms": (time.monotonic() - t0) * 1000,
             })
             raise
+        usage: Dict[str, Any] = {}
+        if extract is not None:
+            try:
+                usage = extract(result) or {}
+            except Exception:
+                pass
+        else:
+            usage = _sniff_usage(result)
         self.log_step({
             "type": type,
             "name": name,
             "input": input,
             "output": result,
             "latency_ms": (time.monotonic() - t0) * 1000,
+            **usage,
         })
         return result
 

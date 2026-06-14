@@ -118,11 +118,30 @@ Create a client. Get your API key from [agentsproof.dev](https://agentsproof.dev
 | `expected_output` | `Any` | no | Expected output for grading comparison |
 | `metadata` | `dict` | no | Optional key/value metadata |
 
-### `run.trace(type, name, fn, input?)` → `T`
+### `run.trace(type, name, fn, input?, extract?)` → `T`
 Wrap a **sync** callable and auto-log it as a step with latency captured.
 
-### `run.atrace(type, name, fn, input?)` → `Awaitable[T]`
+### `run.atrace(type, name, fn, input?, extract?)` → `Awaitable[T]`
 Wrap a **sync or async** callable. Use in `async` agent code.
+
+Token count and cost are captured automatically in priority order:
+
+1. **`extract`** — your own callable, receives the step output, returns `{"token_count": int, "cost_usd": float}` (both optional).
+2. **Auto-detection** — if no extractor is given, the SDK sniffs `output.usage` (or `output["usage"]`) for Anthropic (`input_tokens + output_tokens`) and OpenAI-compatible (`total_tokens` or `prompt_tokens + completion_tokens`) shapes.
+3. **null** — if neither works, both fields are omitted from the step.
+
+```python
+# Anthropic / OpenAI — auto-detected, no extra code needed
+result = run.trace("llm_call", "claude", lambda: anthropic_call(prompt))
+
+# Any other provider — supply an extractor
+result = run.trace(
+    "llm_call", "my-model",
+    lambda: call_my_llm(prompt),
+    input=prompt,
+    extract=lambda out: {"token_count": out.usage.tokens, "cost_usd": out.billed_usd},
+)
+```
 
 ### `run.log_step(payload)`
 Manually log a step. Step types: `llm_call` | `tool_call` | `tool_result` | `memory_read` | `memory_write`.
