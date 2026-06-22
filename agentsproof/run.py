@@ -100,7 +100,7 @@ class AgentRun:
         failure_modes: Optional[list],
         metadata: dict,
     ) -> None:
-        with httpx.Client() as client:
+        with httpx.Client(follow_redirects=True) as client:
             res = client.post(
                 f"{self._base_url}/runs",
                 headers={"x-api-key": self._api_key},
@@ -133,7 +133,7 @@ class AgentRun:
 
         def _send() -> None:
             try:
-                with httpx.Client() as client:
+                with httpx.Client(follow_redirects=True) as client:
                     client.post(
                         f"{self._base_url}/runs/{self._remote_run_id}/steps",
                         headers={"x-api-key": self._api_key},
@@ -234,7 +234,7 @@ class AgentRun:
 
     def complete(self, output: Any) -> dict:
         """Finish the run and trigger grading. Returns {"publicUrl": "..."}."""
-        with httpx.Client() as client:
+        with httpx.Client(follow_redirects=True) as client:
             res = client.post(
                 f"{self._base_url}/runs/{self._remote_run_id}/complete",
                 headers={"x-api-key": self._api_key},
@@ -246,7 +246,7 @@ class AgentRun:
 
     async def acomplete(self, output: Any) -> dict:
         """Async version of complete()."""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             res = await client.post(
                 f"{self._base_url}/runs/{self._remote_run_id}/complete",
                 headers={"x-api-key": self._api_key},

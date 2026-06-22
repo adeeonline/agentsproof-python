@@ -8,7 +8,7 @@ from .types import ProofSuiteResult
 
 
 class AgentsProof:
-    def __init__(self, *, api_key: str, base_url: str = "https://agentsproof.dev/api") -> None:
+    def __init__(self, *, api_key: str, base_url: str = "https://www.agentsproof.dev/api") -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
 
