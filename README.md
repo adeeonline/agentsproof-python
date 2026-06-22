@@ -10,7 +10,7 @@ pip install agentsproof
 
 ## Quick start — single run (sync)
 
-Works with any Python agent — OpenAI, Anthropic, LangChain, LlamaIndex, or plain functions.
+Works with any Python agent — OpenAI, Anthropic, LangChain, CrewAI, or plain functions.
 
 ```python
 import os
@@ -26,11 +26,8 @@ def run_my_agent(user_query: str):
         goal="Search the web for relevant docs and return a working code solution",
     )
 
-    # Wrap any callable — the SDK captures latency and output automatically
     plan = run.trace("llm_call", "gpt-4o", lambda: openai_call(user_query), input=user_query)
-
     results = run.trace("tool_call", "web_search", lambda: web_search(plan))
-
     final_answer = run.trace("llm_call", "gpt-4o", lambda: openai_call(results))
 
     result = run.complete({"answer": final_answer})
@@ -41,8 +38,7 @@ def run_my_agent(user_query: str):
 ## Quick start — async agent
 
 ```python
-import asyncio
-import os
+import asyncio, os
 from agentsproof import AgentsProof
 
 ap = AgentsProof(api_key=os.environ["AGENTSPROOF_API_KEY"])
@@ -54,7 +50,6 @@ async def run_my_agent(user_query: str):
         goal="Return a working code solution",
     )
 
-    # Use atrace() for async callables
     plan = await run.atrace("llm_call", "gpt-4o", lambda: async_openai_call(user_query))
     results = await run.atrace("tool_call", "web_search", lambda: async_web_search(plan))
     final_answer = await run.atrace("llm_call", "gpt-4o", lambda: async_openai_call(results))
@@ -63,6 +58,41 @@ async def run_my_agent(user_query: str):
     print(f"Report: {result['publicUrl']}")
 
 asyncio.run(run_my_agent("How do I reverse a list in Python?"))
+```
+
+## Run against an existing Golden
+
+Pass `golden_id` to use a Golden as the eval context. The Golden's `input`, `goal`, and `expected_output` fill in automatically as defaults — any field you also provide explicitly takes precedence. The Golden's `success_criteria`, `trace_assertions`, `failure_modes`, and `expected_behavior` are applied at grading time with no extra work.
+
+```python
+run = ap.start_run(
+    project_slug="my-coding-agent",
+    golden_id="abc-123",           # all Golden context loaded automatically
+    label="Ad-hoc run against Golden",
+    # input is optional — auto-filled from the Golden when omitted
+)
+
+result = my_agent(run)
+run.complete(result)
+```
+
+## Inline eval fields — no Golden required
+
+Supply the full eval context directly to `start_run()` without creating a Golden in the dashboard. Useful for one-off runs or CI scripts.
+
+```python
+run = ap.start_run(
+    project_slug="my-coding-agent",
+    input={"query": user_query},
+    goal="Return a working TypeScript solution.",
+    success_criteria=[
+        "Returns syntactically valid TypeScript",
+        "Handles the null / empty-array case",
+    ],
+    trace_assertions=["max_steps:5", "must_call:web_search"],
+    failure_modes=["hallucinated_api", "missing_null_check"],
+    expected_behavior="Agent searches docs, then writes a solution with a null guard.",
+)
 ```
 
 ## Proof Suites — regression testing
@@ -102,6 +132,8 @@ result = await ap.arun_proof_suite(
 )
 ```
 
+---
+
 ## API
 
 ### `AgentsProof(api_key, base_url?)`
@@ -111,12 +143,19 @@ Create a client. Get your API key from [agentsproof.dev](https://agentsproof.dev
 
 | Param | Type | Required | Description |
 |---|---|---|---|
-| `project_slug` | `str` | yes | Your project identifier |
-| `input` | `Any` | yes | The initial input or prompt to the agent |
-| `label` | `str` | no | Human-readable label for this run |
-| `goal` | `str` | no | What this run should accomplish |
-| `expected_output` | `Any` | no | Expected output for grading comparison |
-| `metadata` | `dict` | no | Optional key/value metadata |
+| `project_slug` | `str` | **yes** | Your project identifier |
+| `input` | `Any` | yes¹ | The initial input or prompt to the agent |
+| `golden_id` | `str` | no | ID of an existing Golden. Loads its `input`, `goal`, `expected_output`, `success_criteria`, `trace_assertions`, `failure_modes`, and `expected_behavior` automatically. Explicit params override Golden defaults. |
+| `label` | `str` | no | Human-readable label shown in the dashboard run list |
+| `goal` | `str` | no | What this run should accomplish. Drives `goal_completion` scoring. |
+| `expected_output` | `Any` | no | Reference output. Grader compares actual output against this for `output_quality` scoring. |
+| `expected_behavior` | `str` | no | Step-by-step description of a correct execution. Informs all 5 grading axes. |
+| `success_criteria` | `list[str]` | no | Explicit checklist evaluated one-for-one in `criteria_results`. Overrides LLM-inferred criteria from `goal`. |
+| `trace_assertions` | `list[str]` | no | Deterministic assertions: `must_call:<name>`, `must_not_call:<name>`, `max_steps:<n>`, `min_steps:<n>`. Free-text entries are sent to the LLM grader as extra criteria. |
+| `failure_modes` | `list[str]` | no | Known bad outcomes. Grader penalises runs where these are observed. |
+| `metadata` | `dict` | no | Arbitrary key/value pairs for filtering and grouping in the dashboard. |
+
+> ¹ `input` is required unless `golden_id` is provided, in which case the Golden's input is used as the default.
 
 ### `run.trace(type, name, fn, input?, extract?)` → `T`
 Wrap a **sync** callable and auto-log it as a step with latency captured.
@@ -127,8 +166,8 @@ Wrap a **sync or async** callable. Use in `async` agent code.
 Token count and cost are captured automatically in priority order:
 
 1. **`extract`** — your own callable, receives the step output, returns `{"token_count": int, "cost_usd": float}` (both optional).
-2. **Auto-detection** — if no extractor is given, the SDK sniffs `output.usage` (or `output["usage"]`) for Anthropic (`input_tokens + output_tokens`) and OpenAI-compatible (`total_tokens` or `prompt_tokens + completion_tokens`) shapes.
-3. **null** — if neither works, both fields are omitted from the step.
+2. **Auto-detection** — the SDK sniffs `output.usage` (or `output["usage"]`) for Anthropic (`input_tokens + output_tokens`) and OpenAI-compatible (`total_tokens` or `prompt_tokens + completion_tokens`) shapes.
+3. **null** — if neither works, both fields are omitted.
 
 ```python
 # Anthropic / OpenAI — auto-detected, no extra code needed
@@ -144,7 +183,7 @@ result = run.trace(
 ```
 
 ### `run.log_step(payload)`
-Manually log a step. Step types: `llm_call` | `tool_call` | `tool_result` | `memory_read` | `memory_write`.
+Manually log a step without wrapping a function. Step types: `llm_call` | `tool_call` | `tool_result` | `memory_read` | `memory_write`.
 
 ### `run.complete(output)` → `{"publicUrl": str}`
 Finish the run, trigger grading, and get back the public report URL.
@@ -157,27 +196,7 @@ Run approved Goldens locally against your agent. AgentsProof never executes user
 
 The SDK never raises on logging failures — steps are fire-and-forget so the SDK cannot crash your agent.
 
-## Trace assertions
-
-Each Golden can define `trace_assertions` in the dashboard — checked server-side after every proof run and displayed in the run's trace view.
-
-**Structured assertions** are evaluated deterministically (no LLM involved):
-
-| Pattern | What it checks |
-|---|---|
-| `must_call:tool_name` | At least one step must have `name == tool_name` |
-| `must_not_call:tool_name` | No step may have `name == tool_name` |
-| `max_steps:N` | Total step count must be ≤ N |
-| `min_steps:N` | Total step count must be ≥ N |
-
-**Free-text assertions** (anything not matching the patterns above) are passed to the LLM grader as extra criteria alongside `success_criteria`.
-
-Set these in the dashboard when editing a Golden, one per line:
-```
-must_not_call:send_email
-max_steps:10
-Agent must ask for confirmation before any irreversible action
-```
+---
 
 ## How grading works
 
@@ -193,6 +212,16 @@ Each run is automatically scored on 5 axes:
 
 **Weights adjust automatically** — if your agent makes no tool calls, `tool_accuracy` weight is redistributed to `goal_completion` and `output_quality`.
 
-**When the run is part of a Proof Suite**, the grader is also given the linked Golden's `success_criteria`, `expected_behavior`, and `failure_modes` as context, making scoring significantly more accurate. Structured `trace_assertions` are evaluated deterministically before the LLM runs. All results appear as a **Golden checks** panel in the trace view.
+**`criteria_results` — how the checklist is populated:**
 
-**Providing a `goal` always improves accuracy.** Without it, the judge infers intent from the raw input.
+| What you provide | What the grader receives | Result |
+|---|---|---|
+| `success_criteria=[...]` (from Golden or directly) | Explicit bullet list | One pass/fail entry per criterion |
+| `goal` only (no `success_criteria`) | Free-text goal prose | Grader **infers** its own criteria from the goal text |
+| Neither | Nothing | `criteria_results` is empty |
+
+**`trace_assertions`** — structured patterns (`must_call:*`, `max_steps:*`, etc.) are evaluated deterministically before the LLM runs. Free-text entries are passed to the LLM grader as additional criteria.
+
+**Providing a `goal` always improves accuracy.** Without it, the grader infers intent from the raw input alone.
+
+Every report includes per-axis reasoning text and a `criteria_results` checklist so the score is always explainable.
